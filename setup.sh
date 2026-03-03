@@ -25,6 +25,7 @@ accelerate launch produce_gs_relightings.py \
       --image_dir_name images \
       --envmap_path data/light_probes/aerodynamics_workshop.hdr \
       --downsample 2
+      --no_mask
 
 pip install git+https://github.com/facebookresearch/vggt
 python3 scripts/vggt_colmap.py \

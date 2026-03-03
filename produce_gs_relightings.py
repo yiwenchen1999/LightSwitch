@@ -243,7 +243,8 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
         batch_size=1,
         num_workers=0,
     )
-    shutil.copytree(os.path.join(data_path, "masks"), os.path.join(results_dir, "masks"), dirs_exist_ok = True)
+    if not getattr(args, "no_masks", False):
+        shutil.copytree(os.path.join(data_path, "masks"), os.path.join(results_dir, "masks"), dirs_exist_ok = True)
     shutil.copytree(os.path.join(data_path, "sparse"), os.path.join(results_dir, "sparse"), dirs_exist_ok = True)
 
     batch = next(iter(train_dataloader))
