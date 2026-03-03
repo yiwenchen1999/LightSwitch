@@ -243,7 +243,8 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
         batch_size=1,
         num_workers=0,
     )
-    shutil.copytree(os.path.join(data_path, "masks"), os.path.join(results_dir, "masks"), dirs_exist_ok = True)
+    if not getattr(args, "no_masks", False):
+        shutil.copytree(os.path.join(data_path, "masks"), os.path.join(results_dir, "masks"), dirs_exist_ok = True)
     shutil.copytree(os.path.join(data_path, "sparse"), os.path.join(results_dir, "sparse"), dirs_exist_ok = True)
 
     batch = next(iter(train_dataloader))
@@ -389,6 +390,7 @@ if __name__ == "__main__":
     parser.add_argument("--sm_guidance_scale", type=float, default=3)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--downsample", type=int, default=4)
+    parser.add_argument("--no_masks", action="store_true", help="Images are already masked, skip loading masks")
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--enable_xformers_memory_efficient_attention", default=False, action="store_true")
     parser.add_argument("--torch_compile", default=False, action="store_true")

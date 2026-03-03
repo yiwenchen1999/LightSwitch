@@ -247,19 +247,24 @@ class DatasetCOLMAP(Dataset):
             frame_transform = torch.tensor(Rt, dtype=torch.float32)
             mv = torch.linalg.inv(frame_transform)
 
-            mask = _load_mask(os.path.splitext(self.train_cam_infos[i].mask_path)[0])
             img = self.resize(img.permute(2, 0, 1))
-            mask = self.resize(mask.permute(2, 0, 1))
-            # Ensure compatible channels (img may be RGBA, mask may be RGB or RGBA)
+            # Ensure 3 channels (discard alpha if RGBA)
             if img.shape[0] == 4:
                 img = img[:3]
-            if mask.shape[0] == 4:
-                mask = mask[:3]
-            elif mask.shape[0] == 1:
-                mask = mask.expand(3, -1, -1)
             img = pad_to_multiple(img, multiple=8)
-            mask = pad_to_multiple(mask, multiple=8)
-            img = img * mask
+
+            if getattr(self.args, "no_masks", False):
+                # Images already masked, use full mask
+                mask = torch.ones_like(img)
+            else:
+                mask = _load_mask(os.path.splitext(self.train_cam_infos[i].mask_path)[0])
+                mask = self.resize(mask.permute(2, 0, 1))
+                if mask.shape[0] == 4:
+                    mask = mask[:3]
+                elif mask.shape[0] == 1:
+                    mask = mask.expand(3, -1, -1)
+                mask = pad_to_multiple(mask, multiple=8)
+                img = img * mask
             img = 2*(img - 0.5)
 
             frame_pluckers = torch.tensor(generate_plucker_rays(frame_transform, img.shape[1:3], [self.train_cam_infos[i].FovX, self.train_cam_infos[i].FovY]))
