@@ -243,8 +243,7 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
         batch_size=1,
         num_workers=0,
     )
-    if not getattr(args, "no_masks", False):
-        shutil.copytree(os.path.join(data_path, "masks"), os.path.join(results_dir, "masks"), dirs_exist_ok = True)
+    shutil.copytree(os.path.join(data_path, "masks"), os.path.join(results_dir, "masks"), dirs_exist_ok = True)
     shutil.copytree(os.path.join(data_path, "sparse"), os.path.join(results_dir, "sparse"), dirs_exist_ok = True)
 
     batch = next(iter(train_dataloader))
@@ -294,45 +293,9 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
 
     torch.cuda.empty_cache()
 
-# SD 2.1 scheduler config (v_prediction) - used when Hugging Face download fails
-SD21_SCHEDULER_CONFIG = {
-    "num_train_timesteps": 1000,
-    "beta_schedule": "scaled_linear",
-    "beta_start": 0.00085,
-    "beta_end": 0.012,
-    "clip_sample": False,
-    "set_alpha_to_one": False,
-    "steps_offset": 1,
-    "prediction_type": "v_prediction",
-}
-
-# Public clone of SD 2.1 base (no gated access): https://huggingface.co/Manojb/stable-diffusion-2-1-base
-_SD21_REPOS = ["Manojb/stable-diffusion-2-1-base", "stabilityai/stable-diffusion-2-1-base"]
-
-def _load_scheduler():
-    for repo in _SD21_REPOS:
-        try:
-            return DDIMScheduler.from_pretrained(
-                repo,
-                subfolder="scheduler",
-                prediction_type="v_prediction",
-            )
-        except (OSError, Exception) as e:
-            print(f"Could not load scheduler from {repo}: {e}. Trying next...")
-    print("Using built-in SD 2.1 config.")
-    return DDIMScheduler.from_config(SD21_SCHEDULER_CONFIG)
-
-def _load_vae():
-    for repo in _SD21_REPOS + ["runwayml/stable-diffusion-v1-5"]:
-        try:
-            return AutoencoderKL.from_pretrained(repo, subfolder="vae")
-        except (OSError, Exception) as e:
-            print(f"Could not load VAE from {repo}: {e}. Trying next...")
-    raise RuntimeError("Failed to load VAE. Check network or HF auth (hf auth login).")
-
 def produce_gs_relightings(args, weight_dtype=torch.float16):
-    scheduler = _load_scheduler()
-    vae = _load_vae()
+    scheduler = DDIMScheduler.from_pretrained("sd2-community/stable-diffusion-2-1", subfolder="scheduler", prediction_type="v_prediction")
+    vae = AutoencoderKL.from_pretrained("sd2-community/stable-diffusion-2-1", subfolder="vae")
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model,
         use_safetensors=True,
@@ -390,7 +353,6 @@ if __name__ == "__main__":
     parser.add_argument("--sm_guidance_scale", type=float, default=3)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--downsample", type=int, default=4)
-    parser.add_argument("--no_masks", action="store_true", help="Images are already masked, skip loading masks")
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--enable_xformers_memory_efficient_attention", default=False, action="store_true")
     parser.add_argument("--torch_compile", default=False, action="store_true")

@@ -11,6 +11,10 @@ cd ~/LightSwitch
 source lightswitch_env/bin/activate
 
 # 1. SAM:
+
+export OBJ=toycar
+export IMAGES=images_4
+export ENVMAP=aerodynamics_workshop
 bash scripts/download_preprocess.sh
 python scripts/generate_masks.py \
       --image_dir data/ceramic_vase_02_env_0/images \
