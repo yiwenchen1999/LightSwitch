@@ -354,6 +354,7 @@ if __name__ == "__main__":
     parser.add_argument("--sm_guidance_scale", type=float, default=3)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--downsample", type=int, default=4)
+    parser.add_argument("--no_masks", action="store_true", help="Skip loading masks, use full-image masks instead")
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--enable_xformers_memory_efficient_attention", default=False, action="store_true")
     parser.add_argument("--torch_compile", default=False, action="store_true")
