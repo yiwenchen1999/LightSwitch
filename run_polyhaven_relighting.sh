@@ -2,9 +2,10 @@
 set -e
 
 DATA_ROOT="/data/polyhaven_lvsm/test"
-METADATA_DIR="relight_metadata"
+METADATA_DIR="relight_metadata_smallsplit"
 DOWNSAMPLE=1
-NUM_PROCESSES=8
+NUM_PROCESSES=1
+export CUDA_VISIBLE_DEVICES=0
 
 for meta_file in "$METADATA_DIR"/*.json; do
     scene=$(basename "$meta_file" .json)
