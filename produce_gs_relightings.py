@@ -18,7 +18,7 @@ from accelerate import Accelerator
 
 from pipeline_relighting_multi_vae import RelightingPipelineMVVAE
 from stablematerial.pipeline_stablematerial_mv import StableMaterialPipelineMV
-from dataset_colmap import DatasetCOLMAP
+from dataset_colmap import DatasetCOLMAP, pad_to_multiple
 from dataset_polyhaven import DatasetPolyhaven
 from models.unet_2d_condition import UNet2DConditionModel
 
@@ -26,6 +26,14 @@ def reverse_order(images, perm_history):
     for permuted_indices in reversed(perm_history):
         images = images[np.argsort(permuted_indices)]
     return images
+
+def pad_batch(tensor, target_B):
+    """Pad tensor along dim 0 to target_B by tiling, handles pad_size > B."""
+    B = tensor.shape[0]
+    if B >= target_B:
+        return tensor
+    n_repeats = (target_B + B - 1) // B
+    return tensor.repeat(n_repeats, *([1] * (tensor.dim() - 1)))[:target_B]
 
 def get_materials_parallel_denoise(accelerate, stable_material, save_path, input_image, pose, mask, args, num_inference_loops=1, num_inference_steps=50, weight_dtype=torch.float16, modifier=""):
     pred_albedo, pred_orm = [], []
@@ -296,6 +304,14 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
 
     torch.cuda.empty_cache()
 
+def compute_psnr(pred, gt):
+    """Compute PSNR between two uint8 images (H, W, C)."""
+    mse = np.mean((pred.astype(np.float64) - gt.astype(np.float64)) ** 2)
+    if mse == 0:
+        return float('inf')
+    return 10.0 * np.log10(255.0 ** 2 / mse)
+
+
 def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=torch.float16, generator=None):
     image_transforms = T.Compose([T.Normalize([0.5], [0.5])])
     env_transform = T.Compose([
@@ -309,7 +325,7 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
 
     scene_name = relight_meta["scene_name"]
     relit_scene_name = relight_meta["relit_scene_name"]
-    view_indices = relight_meta.get("context_view_indices", None)
+    context_view_indices = relight_meta.get("context_view_indices", None)
 
     envmap_path = os.path.join(args.data_root, "envmaps", f"{relit_scene_name}.hdr")
     if not os.path.exists(envmap_path):
@@ -330,7 +346,7 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
         transform=image_transforms,
         env_transform=env_transform,
         envmap_path=envmap_path,
-        view_indices=view_indices,
+        view_indices=None,
     )
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -351,16 +367,16 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
     envs_darker_target = batch["envs_darker"].to(dtype=weight_dtype).to(pipeline.device)
     envs_brighter_target = batch["envs_brighter"].to(dtype=weight_dtype).to(pipeline.device)
     B = input_image.shape[0]
-    remainder = B % 16
-    if remainder != 0:
-        pad_size = 16 - remainder
-        input_image = torch.cat((input_image, input_image[:pad_size]), dim=0)
-        mask = torch.cat((mask, mask[:pad_size]), dim=0)
-        dir_embeds = torch.cat((dir_embeds, dir_embeds[:pad_size]), dim=0)
-        pluckers = torch.cat((pluckers, pluckers[:pad_size]), dim=0)
-        pose = torch.cat((pose, pose[:pad_size]), dim=0)
-        envs_darker_target = torch.cat((envs_darker_target, envs_darker_target[:pad_size]), dim=0)
-        envs_brighter_target = torch.cat((envs_brighter_target, envs_brighter_target[:pad_size]), dim=0)
+    alignment = max(16, 2 * accelerate.state.num_processes)
+    target_B = ((B + alignment - 1) // alignment) * alignment
+    if target_B > B:
+        input_image = pad_batch(input_image, target_B)
+        mask = pad_batch(mask, target_B)
+        dir_embeds = pad_batch(dir_embeds, target_B)
+        pluckers = pad_batch(pluckers, target_B)
+        pose = pad_batch(pose, target_B)
+        envs_darker_target = pad_batch(envs_darker_target, target_B)
+        envs_brighter_target = pad_batch(envs_brighter_target, target_B)
 
     pred_albedo, pred_orm = get_materials_parallel_denoise(
         accelerate, stable_material, os.path.split(results_dir)[0],
@@ -375,9 +391,9 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
     relit_image_mean = np.mean(np.stack(temp_relit_images_ours), axis=0)
     relit_image_mean = torch.from_numpy(relit_image_mean).permute(0, 3, 1, 2)
 
-    relit_images_mean_save = relit_image_mean * mask
+    relit_images_mean_save = relit_image_mean * mask[:relit_image_mean.shape[0]]
     relit_images_mean_save = relit_images_mean_save.permute(0, 2, 3, 1).cpu().numpy()
-    mask_np = mask.permute(0, 2, 3, 1).cpu().numpy()[..., :1]
+    mask_np = mask[:relit_image_mean.shape[0]].permute(0, 2, 3, 1).cpu().numpy()[..., :1]
     relit_images_mean_save = np.concatenate((relit_images_mean_save, mask_np), axis=-1)
     relit_images_mean_save = np.clip(np.rint(relit_images_mean_save * 255.0), 0, 255).astype(np.uint8)
     if accelerate.is_main_process:
@@ -385,6 +401,53 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
         for it in range(train_dataset.n_images):
             fname = train_dataset.all_img[it]
             imageio.imwrite(os.path.join(out_dir, fname), relit_images_mean_save[it])
+
+        if context_view_indices is not None:
+            gt_meta_path = os.path.join(args.data_root, "metadata", f"{relit_scene_name}.json")
+            with open(gt_meta_path, "r") as f:
+                gt_metadata = json.load(f)
+            gt_frames = gt_metadata["frames"]
+            resize_fn = T.Resize(
+                (train_dataset.h, train_dataset.w), antialias=True
+            )
+
+            psnr_values = []
+            for idx in context_view_indices:
+                gt_raw = imageio.imread(gt_frames[idx]["image_path"])
+                gt_tensor = torch.tensor(gt_raw / 255.0, dtype=torch.float32).permute(2, 0, 1)
+                gt_tensor = resize_fn(gt_tensor)
+                if gt_tensor.shape[0] == 4:
+                    gt_rgb = gt_tensor[:3]
+                    gt_mask = gt_tensor[3:4].expand(3, -1, -1)
+                else:
+                    gt_rgb = gt_tensor
+                    gt_mask = torch.ones_like(gt_rgb)
+                gt_rgb = pad_to_multiple(gt_rgb, multiple=8)
+                gt_mask = pad_to_multiple(gt_mask, multiple=8)
+                gt_rgb = gt_rgb * gt_mask
+
+                gt_img = np.clip(np.rint(gt_rgb.permute(1, 2, 0).numpy() * 255.0), 0, 255).astype(np.uint8)
+                pred_img = relit_images_mean_save[idx][..., :3]
+
+                psnr_val = compute_psnr(pred_img, gt_img)
+                psnr_values.append(psnr_val)
+                print(f"  View {idx}: PSNR = {psnr_val:.2f} dB")
+
+            mean_psnr = np.mean(psnr_values)
+            print(f"Mean PSNR over {len(context_view_indices)} context views: {mean_psnr:.2f} dB")
+
+            metrics_path = os.path.join(results_dir, "metrics.json")
+            metrics = {
+                "scene_name": scene_name,
+                "relit_scene_name": relit_scene_name,
+                "context_view_indices": context_view_indices,
+                "psnr_per_view": {str(idx): psnr_val for idx, psnr_val in zip(context_view_indices, psnr_values)},
+                "mean_psnr": mean_psnr,
+            }
+            with open(metrics_path, "w") as f:
+                json.dump(metrics, f, indent=2)
+            print(f"Metrics saved to {metrics_path}")
+
     accelerate.wait_for_everyone()
     torch.cuda.empty_cache()
 
