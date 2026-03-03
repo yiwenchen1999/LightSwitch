@@ -250,6 +250,13 @@ class DatasetCOLMAP(Dataset):
             mask = _load_mask(os.path.splitext(self.train_cam_infos[i].mask_path)[0])
             img = self.resize(img.permute(2, 0, 1))
             mask = self.resize(mask.permute(2, 0, 1))
+            # Ensure compatible channels (img may be RGBA, mask may be RGB or RGBA)
+            if img.shape[0] == 4:
+                img = img[:3]
+            if mask.shape[0] == 4:
+                mask = mask[:3]
+            elif mask.shape[0] == 1:
+                mask = mask.expand(3, -1, -1)
             img = pad_to_multiple(img, multiple=8)
             mask = pad_to_multiple(mask, multiple=8)
             img = img * mask
