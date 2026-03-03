@@ -11,7 +11,11 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
 from packaging import version
-from transformers import CLIPFeatureExtractor, CLIPVisionModelWithProjection, AutoProcessor
+try:
+    from transformers import CLIPImageProcessor
+except ImportError:
+    from transformers import CLIPFeatureExtractor as CLIPImageProcessor
+from transformers import CLIPVisionModelWithProjection, AutoProcessor
 
 from .model.MultiViewTransformerBlock import MultiViewTransformerBlock
 
@@ -78,7 +82,7 @@ class StableMaterialPipelineMV(DiffusionPipeline):
         safety_checker ([`StableDiffusionSafetyChecker`]):
             Classification module that estimates whether generated images could be considered offensive or harmful.
             Please, refer to the [model card](https://huggingface.co/runwayml/stable-diffusion-v1-5) for details.
-        feature_extractor ([`CLIPFeatureExtractor`]):
+        feature_extractor ([`CLIPImageProcessor`]):
             Model that extracts features from generated images to be used as inputs for the `safety_checker`.
     """
 
@@ -91,7 +95,7 @@ class StableMaterialPipelineMV(DiffusionPipeline):
         unet: UNet2DConditionModel,
         scheduler: KarrasDiffusionSchedulers,
         safety_checker: StableDiffusionSafetyChecker,
-        feature_extractor: CLIPFeatureExtractor,
+        feature_extractor: CLIPImageProcessor,
         cc_projection: CCProjection,
         requires_safety_checker: bool = False,
         num_views: int = 4
