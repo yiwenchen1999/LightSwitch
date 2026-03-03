@@ -1,0 +1,34 @@
+{
+  "summary": {
+    "scene_name": "ship_pinnace_env_1",
+    "psnr": Infinity,
+    "lpips": 0.007354736328125,
+    "ssim": 0.9994497895240784
+  },
+  "per_view": [
+    {
+      "view": 70,
+      "psnr": Infinity,
+      "lpips": 0.0,
+      "ssim": 1.0
+    },
+    {
+      "view": 71,
+      "psnr": Infinity,
+      "lpips": 0.0,
+      "ssim": 1.0
+    },
+    {
+      "view": 80,
+      "psnr": 40.76214599609375,
+      "lpips": 0.0264892578125,
+      "ssim": 0.9980616569519043
+    },
+    {
+      "view": 98,
+      "psnr": 63.54596710205078,
+      "lpips": 0.0029754638671875,
+      "ssim": 0.999737560749054
+    }
+  ]
+}

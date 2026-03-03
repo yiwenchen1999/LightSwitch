@@ -3,6 +3,7 @@ import torchvision.transforms as T
 import torch
 from tqdm.auto import tqdm
 import argparse
+import json
 import os, shutil
 import atexit
 import imageio.v3 as imageio
@@ -18,6 +19,7 @@ from accelerate import Accelerator
 from pipeline_relighting_multi_vae import RelightingPipelineMVVAE
 from stablematerial.pipeline_stablematerial_mv import StableMaterialPipelineMV
 from dataset_colmap import DatasetCOLMAP
+from dataset_polyhaven import DatasetPolyhaven
 from models.unet_2d_condition import UNet2DConditionModel
 
 def reverse_order(images, perm_history):
@@ -294,6 +296,99 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
 
     torch.cuda.empty_cache()
 
+def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=torch.float16, generator=None):
+    image_transforms = T.Compose([T.Normalize([0.5], [0.5])])
+    env_transform = T.Compose([
+        T.ToTensor(),
+        T.Resize((256, 512), antialias=True),
+        T.Normalize([0.5], [0.5]),
+    ])
+
+    with open(args.relight_metadata, "r") as f:
+        relight_meta = json.load(f)
+
+    scene_name = relight_meta["scene_name"]
+    relit_scene_name = relight_meta["relit_scene_name"]
+    view_indices = relight_meta.get("context_view_indices", None)
+
+    envmap_path = os.path.join(args.data_root, "envmaps", f"{relit_scene_name}.hdr")
+    if not os.path.exists(envmap_path):
+        envmap_path = args.envmap_path
+
+    results_dir = os.path.join(
+        "relighting_outputs", f"rm_{args.guidance_scale}_{args.sm_guidance_scale}",
+        scene_name, relit_scene_name,
+    )
+    os.makedirs(results_dir, exist_ok=True)
+    out_dir = os.path.join(results_dir, "images")
+    os.makedirs(out_dir, exist_ok=True)
+
+    train_dataset = DatasetPolyhaven(
+        data_root=args.data_root,
+        scene_name=scene_name,
+        args=args,
+        transform=image_transforms,
+        env_transform=env_transform,
+        envmap_path=envmap_path,
+        view_indices=view_indices,
+    )
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        collate_fn=train_dataset.collate,
+        shuffle=False,
+        batch_size=1,
+        num_workers=0,
+    )
+
+    batch = next(iter(train_dataloader))
+
+    mask = batch["mask"]
+    input_image = batch["image"].to(dtype=weight_dtype)
+    dir_embeds = batch["dir_embeds"].to(dtype=weight_dtype)
+    pluckers = batch["pluckers"].to(dtype=weight_dtype)
+    pose = batch["T"].to(dtype=weight_dtype)
+
+    envs_darker_target = batch["envs_darker"].to(dtype=weight_dtype).to(pipeline.device)
+    envs_brighter_target = batch["envs_brighter"].to(dtype=weight_dtype).to(pipeline.device)
+    B = input_image.shape[0]
+    remainder = B % 16
+    if remainder != 0:
+        pad_size = 16 - remainder
+        input_image = torch.cat((input_image, input_image[:pad_size]), dim=0)
+        mask = torch.cat((mask, mask[:pad_size]), dim=0)
+        dir_embeds = torch.cat((dir_embeds, dir_embeds[:pad_size]), dim=0)
+        pluckers = torch.cat((pluckers, pluckers[:pad_size]), dim=0)
+        pose = torch.cat((pose, pose[:pad_size]), dim=0)
+        envs_darker_target = torch.cat((envs_darker_target, envs_darker_target[:pad_size]), dim=0)
+        envs_brighter_target = torch.cat((envs_brighter_target, envs_brighter_target[:pad_size]), dim=0)
+
+    pred_albedo, pred_orm = get_materials_parallel_denoise(
+        accelerate, stable_material, os.path.split(results_dir)[0],
+        input_image, pose, mask, args, num_inference_steps=35, num_inference_loops=1,
+    )
+    temp_relit_images_ours = get_relightings_parallel_denoise(
+        accelerate, pipeline, input_image, pred_albedo, pred_orm,
+        envs_darker_target, envs_brighter_target, dir_embeds, pluckers,
+        args, generator=generator, num_inference_steps=35, num_inference_loops=1,
+    )
+
+    relit_image_mean = np.mean(np.stack(temp_relit_images_ours), axis=0)
+    relit_image_mean = torch.from_numpy(relit_image_mean).permute(0, 3, 1, 2)
+
+    relit_images_mean_save = relit_image_mean * mask
+    relit_images_mean_save = relit_images_mean_save.permute(0, 2, 3, 1).cpu().numpy()
+    mask_np = mask.permute(0, 2, 3, 1).cpu().numpy()[..., :1]
+    relit_images_mean_save = np.concatenate((relit_images_mean_save, mask_np), axis=-1)
+    relit_images_mean_save = np.clip(np.rint(relit_images_mean_save * 255.0), 0, 255).astype(np.uint8)
+    if accelerate.is_main_process:
+        print(f"Saving {train_dataset.n_images} images...")
+        for it in range(train_dataset.n_images):
+            fname = train_dataset.all_img[it]
+            imageio.imwrite(os.path.join(out_dir, fname), relit_images_mean_save[it])
+    accelerate.wait_for_everyone()
+    torch.cuda.empty_cache()
+
+
 def produce_gs_relightings(args, weight_dtype=torch.float16):
     scheduler = DDIMScheduler.from_pretrained("sd2-community/stable-diffusion-2-1", subfolder="scheduler", prediction_type="v_prediction")
     vae = AutoencoderKL.from_pretrained("sd2-community/stable-diffusion-2-1", subfolder="vae")
@@ -331,7 +426,12 @@ def produce_gs_relightings(args, weight_dtype=torch.float16):
 
     stable_material.to(accelerate.device)
     pipeline.to(accelerate.device)
-    produce_colmap(accelerate, args, args.scene_dir, pipeline, stable_material, weight_dtype=weight_dtype, generator=generator)
+
+    if args.dataset_type == "polyhaven":
+        produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=weight_dtype, generator=generator)
+    else:
+        produce_colmap(accelerate, args, args.scene_dir, pipeline, stable_material, weight_dtype=weight_dtype, generator=generator)
+
     def cleanup_distributed():
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
@@ -358,6 +458,9 @@ if __name__ == "__main__":
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--enable_xformers_memory_efficient_attention", default=False, action="store_true")
     parser.add_argument("--torch_compile", default=False, action="store_true")
+    parser.add_argument("--dataset_type", type=str, default="colmap", choices=["colmap", "polyhaven"])
+    parser.add_argument("--data_root", type=str, default=None, help="Root directory for polyhaven data (contains metadata/, images/, envmaps/)")
+    parser.add_argument("--relight_metadata", type=str, default=None, help="Path to relight_metadata JSON specifying scene_name, relit_scene_name, and view indices")
     args = parser.parse_args()
     torch.manual_seed(args.seed)
     dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
