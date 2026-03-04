@@ -328,9 +328,24 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
     relit_scene_name = relight_meta["relit_scene_name"]
     context_view_indices = relight_meta.get("context_view_indices", None)
 
-    envmap_path = os.path.join(args.data_root, "envmaps", f"{relit_scene_name}.hdr")
-    if not os.path.exists(envmap_path):
+    envmap_base = os.path.join(args.data_root, "envmaps")
+    envmap_path = None
+    for ext in (".hdr", ".exr"):
+        candidate = os.path.join(envmap_base, f"{relit_scene_name}{ext}")
+        if os.path.exists(candidate):
+            envmap_path = candidate
+            break
+    if envmap_path is None:
+        candidate_dir = os.path.join(envmap_base, relit_scene_name)
+        if os.path.isdir(candidate_dir) and os.path.exists(os.path.join(candidate_dir, "00000_hdr.png")):
+            envmap_path = candidate_dir
+    if envmap_path is None and args.envmap_path and os.path.exists(args.envmap_path):
         envmap_path = args.envmap_path
+    if envmap_path is None:
+        raise FileNotFoundError(
+            f"No envmap found for '{relit_scene_name}' in {envmap_base} "
+            f"(tried .hdr/.exr and {relit_scene_name}/ dir with _hdr/_ldr PNGs)"
+        )
 
     results_dir = os.path.join(
         "relighting_outputs", f"rm_{args.guidance_scale}_{args.sm_guidance_scale}",

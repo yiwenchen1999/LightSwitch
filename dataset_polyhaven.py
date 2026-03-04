@@ -20,6 +20,35 @@ from dataset_colmap import (
 )
 
 
+def reconstruct_hdr_from_pngs(envmap_dir, frame_idx=0):
+    """Reconstruct an HDR envmap from the _hdr.png + _ldr.png pair saved by preprocess_objaverse.
+
+    preprocess_objaverse.py stores:
+        _ldr.png = uint8( raw.clip(0,1) ** (1/2.2) * 255 )
+        _hdr.png = uint8( log1p(10*raw) / max(log1p(10*raw)) * 255 )
+
+    We invert both and use non-saturated LDR pixels to recover the unknown max_log scale.
+    """
+    hdr_path = os.path.join(envmap_dir, f"{frame_idx:05d}_hdr.png")
+    ldr_path = os.path.join(envmap_dir, f"{frame_idx:05d}_ldr.png")
+
+    hdr_png = imageio.imread(hdr_path)[..., :3].astype(np.float64) / 255.0
+    ldr_png = imageio.imread(ldr_path)[..., :3].astype(np.float64) / 255.0
+
+    ldr_linear = ldr_png ** 2.2
+
+    hdr_norm = hdr_png  # = log1p(10*raw) / max_log
+
+    non_sat = (ldr_linear > 0.01) & (ldr_linear < 0.95) & (hdr_norm > 0.01)
+    if non_sat.any():
+        max_log = np.median(np.log1p(10.0 * ldr_linear[non_sat]) / hdr_norm[non_sat])
+    else:
+        max_log = np.log1p(10.0)
+
+    raw_hdr = np.expm1(hdr_norm * max_log) / 10.0
+    return raw_hdr.astype(np.float32)
+
+
 class DatasetPolyhaven(Dataset):
     """Dataset for polyhaven_lvsm format with JSON metadata (OpenCV w2c + fxfycxcy)."""
 
@@ -45,7 +74,12 @@ class DatasetPolyhaven(Dataset):
         self.n_images = len(self.frames)
         self.downsample = args.downsample
 
-        self.envmap = imageio.imread(envmap_path)[..., :3]
+        if os.path.isdir(envmap_path):
+            self.envmap = reconstruct_hdr_from_pngs(envmap_path)
+            print(f"Reconstructed HDR envmap from {envmap_path} "
+                  f"(range [{self.envmap.min():.3f}, {self.envmap.max():.3f}])")
+        else:
+            self.envmap = imageio.imread(envmap_path)[..., :3]
 
         if env_transform is None:
             self.env_transform = transforms.Compose([
