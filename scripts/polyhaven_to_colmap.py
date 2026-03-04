@@ -176,7 +176,7 @@ def convert_scene(metadata_path, output_dir, downsample=1, image_source_dir=None
 
     write_cameras_bin(cameras, os.path.join(sparse_dir, "cameras.bin"))
     write_images_bin(colmap_images, os.path.join(sparse_dir, "images.bin"))
-    write_points3d_bin(os.path.join(sparse_dir, "points3d.bin"))
+    write_points3d_bin(os.path.join(sparse_dir, "points3D.bin"))
 
     print(f"Wrote COLMAP data: {len(colmap_images)} images, {len(cameras)} camera(s) "
           f"[{w}x{h}] -> {sparse_dir}")
