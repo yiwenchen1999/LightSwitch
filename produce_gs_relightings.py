@@ -21,6 +21,7 @@ from stablematerial.pipeline_stablematerial_mv import StableMaterialPipelineMV
 from dataset_colmap import DatasetCOLMAP, pad_to_multiple
 from dataset_polyhaven import DatasetPolyhaven
 from models.unet_2d_condition import UNet2DConditionModel
+from scripts.polyhaven_to_colmap import convert_scene as polyhaven_to_colmap
 
 def reverse_order(images, perm_history):
     for permuted_indices in reversed(perm_history):
@@ -400,7 +401,16 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
         print(f"Saving {train_dataset.n_images} images...")
         for it in range(train_dataset.n_images):
             fname = train_dataset.all_img[it]
-            imageio.imwrite(os.path.join(out_dir, fname), relit_images_mean_save[it])
+            imageio.imwrite(os.path.join(out_dir, fname), relit_images_mean_save[it][..., :3])
+
+        metadata_path = os.path.join(args.data_root, "metadata", f"{scene_name}.json")
+        polyhaven_to_colmap(
+            metadata_path=metadata_path,
+            output_dir=results_dir,
+            downsample=args.downsample,
+            skip_images=True,
+        )
+        print(f"COLMAP sparse data written to {results_dir}/sparse/0/")
 
         if context_view_indices is not None:
             gt_meta_path = os.path.join(args.data_root, "metadata", f"{relit_scene_name}.json")
