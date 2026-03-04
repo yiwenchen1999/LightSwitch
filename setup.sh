@@ -31,3 +31,4 @@ pip install git+https://github.com/facebookresearch/vggt
 python3 scripts/vggt_colmap.py \
       --scene_dir data/ceramic_vase_02_env_0 \
       --image_dir_name images
+

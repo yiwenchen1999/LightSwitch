@@ -36,6 +36,14 @@ def pad_batch(tensor, target_B):
     n_repeats = (target_B + B - 1) // B
     return tensor.repeat(n_repeats, *([1] * (tensor.dim() - 1)))[:target_B]
 
+
+def filmic_tonemap(x):
+    """Blender-style Filmic/ACES tone mapping: HDR linear -> LDR [0,1].
+    Uses ACES fitted curve (Narkowicz) instead of hard clipping."""
+    x = np.asarray(x, dtype=np.float64)
+    a, b, c, d, e = 2.51, 0.03, 2.43, 0.59, 0.14
+    return np.clip((x * (a * x + b)) / (x * (c * x + d) + e + 1e-8), 0, 1)
+
 def get_materials_parallel_denoise(accelerate, stable_material, save_path, input_image, pose, mask, args, num_inference_loops=1, num_inference_steps=50, weight_dtype=torch.float16, modifier=""):
     pred_albedo, pred_orm = [], []
     albedo_path, orm_path = os.path.join(save_path, "albedo" + modifier), os.path.join(save_path, "orm" + modifier)
@@ -295,8 +303,9 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
     relit_images_mean_save = relit_images_rescaled * mask
     relit_images_mean_save = relit_images_mean_save.permute(0, 2, 3, 1).cpu().numpy()
     mask = mask.permute(0, 2, 3, 1).cpu().numpy()[..., :1]
-    relit_images_mean_save = np.concatenate((relit_images_mean_save, mask), axis=-1)
-    relit_images_mean_save = np.clip(np.rint(relit_images_mean_save * 255.0), 0, 255).astype(np.uint8)
+    rgb = filmic_tonemap(relit_images_mean_save[..., :3])
+    relit_images_mean_save = np.concatenate((rgb, mask), axis=-1)
+    relit_images_mean_save = np.rint(relit_images_mean_save * 255.0).clip(0, 255).astype(np.uint8)
     if accelerate.is_main_process:
         print(f"Saving {train_dataset.n_images} images...")
         for it, img_idx in enumerate(np.arange(train_dataset.n_images)):
@@ -410,8 +419,9 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
     relit_images_mean_save = relit_image_mean * mask[:relit_image_mean.shape[0]]
     relit_images_mean_save = relit_images_mean_save.permute(0, 2, 3, 1).cpu().numpy()
     mask_np = mask[:relit_image_mean.shape[0]].permute(0, 2, 3, 1).cpu().numpy()[..., :1]
-    relit_images_mean_save = np.concatenate((relit_images_mean_save, mask_np), axis=-1)
-    relit_images_mean_save = np.clip(np.rint(relit_images_mean_save * 255.0), 0, 255).astype(np.uint8)
+    rgb = filmic_tonemap(relit_images_mean_save[..., :3])
+    relit_images_mean_save = np.concatenate((rgb, mask_np), axis=-1)
+    relit_images_mean_save = np.rint(relit_images_mean_save * 255.0).clip(0, 255).astype(np.uint8)
     if accelerate.is_main_process:
         print(f"Saving {train_dataset.n_images} images...")
         for it in range(train_dataset.n_images):

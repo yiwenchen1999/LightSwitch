@@ -81,6 +81,10 @@ class DatasetPolyhaven(Dataset):
         else:
             self.envmap = imageio.imread(envmap_path)[..., :3]
 
+        #todo: check if this is to the right or to theleft, Align with polyhaven convention: rotate envmap 90° left (rightmost 1/4 → leftmost)
+        w = self.envmap.shape[1]
+        self.envmap = np.roll(self.envmap, -w // 4, axis=1)
+
         if env_transform is None:
             self.env_transform = transforms.Compose([
                 transforms.ToTensor(),
