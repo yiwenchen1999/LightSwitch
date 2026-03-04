@@ -47,6 +47,7 @@ def filmic_tonemap(x):
 def get_materials_parallel_denoise(accelerate, stable_material, save_path, input_image, pose, mask, args, num_inference_loops=1, num_inference_steps=50, weight_dtype=torch.float16, modifier=""):
     pred_albedo, pred_orm = [], []
     albedo_path, orm_path = os.path.join(save_path, "albedo" + modifier), os.path.join(save_path, "orm" + modifier)
+    load_from_cache = False
     if os.path.exists(albedo_path):
         print("Loading albedo and orm from file...")
         for f_albedo in sorted(os.listdir(albedo_path)):
@@ -55,7 +56,14 @@ def get_materials_parallel_denoise(accelerate, stable_material, save_path, input
             pred_orm.append(imageio.imread(os.path.join(orm_path, f_orm))/255.)
         pred_albedo = np.stack(pred_albedo)
         pred_orm = np.stack(pred_orm)
-    else:
+        h_cur, w_cur = input_image.shape[2], input_image.shape[3]
+        n_cur = input_image.shape[0]
+        if pred_albedo.shape[0] == n_cur and pred_albedo.shape[1] == h_cur and pred_albedo.shape[2] == w_cur:
+            load_from_cache = True
+        else:
+            print(f"Cached albedo {pred_albedo.shape[1]}x{pred_albedo.shape[2]} != current {h_cur}x{w_cur}, recomputing...")
+            pred_albedo, pred_orm = [], []
+    if not load_from_cache:
         h, w = input_image.shape[2:]
 
         # 1. Check input image
