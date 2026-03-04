@@ -1,6 +1,7 @@
-export OBJ=potted_plant_02_white_env_0
+export OBJ=ceramic_vase_02_env_0
+# export OBJ=potted_plant_02_white_env_0
 # relit_scene_name from metadata (used in Steps 4–5)
-export RELIT=$(python3 -c "import json; print(json.load(open('relight_metadata/$OBJ.json'))['relit_scene_name'])")
+export RELIT=$(python3 -c "import json; print(json.load(open('data_samples/relight_metadata/$OBJ.json'))['relit_scene_name'])")
 # ============================================================
 # Step 1: 转换 polyhaven → COLMAP 格式（原始 scene）
 # ============================================================
@@ -20,7 +21,7 @@ rm -rf relighting_outputs/rm_3_3/$OBJ/orm*
 CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes 1 produce_gs_relightings.py \
     --dataset_type polyhaven \
     --data_root /data/polyhaven_lvsm/test \
-    --relight_metadata relight_metadata/$OBJ.json \
+    --relight_metadata data_samples/relight_metadata/$OBJ.json \
     --downsample 1
 
 # ============================================================

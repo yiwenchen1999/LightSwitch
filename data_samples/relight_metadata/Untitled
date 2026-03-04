@@ -1,0 +1,5 @@
+CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes 1 produce_gs_relightings.py \
+    --dataset_type polyhaven \
+    --data_root /data/polyhaven_lvsm/test \
+    --relight_metadata relight_metadata/$OBJ.json \
+    --downsample 1
