@@ -6,7 +6,7 @@ python -m venv lightswitch_env
 # 激活虚拟环境
 source lightswitch_env/bin/activate
 
-ssh ubuntu@192.168.1.100
+ssh ubuntu@147.185.41.15
 cd ~/LightSwitch
 source lightswitch_env/bin/activate
 
