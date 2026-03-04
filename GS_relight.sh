@@ -1,4 +1,4 @@
-export OBJ=pot_enamel_01_white_env_0
+export OBJ=potted_plant_02_white_env_0
 # relit_scene_name from metadata (used in Steps 4–5)
 export RELIT=$(python3 -c "import json; print(json.load(open('relight_metadata/$OBJ.json'))['relit_scene_name'])")
 # ============================================================
