@@ -1,45 +1,65 @@
-export OBJ=ceramic_vase_02_env_0
-# export OBJ=potted_plant_02_white_env_0
-# relit_scene_name from metadata (used in Steps 4–5)
-export RELIT=$(python3 -c "import json; print(json.load(open('data_samples/relight_metadata/$OBJ.json'))['relit_scene_name'])")
-# ============================================================
-# Step 1: 转换 polyhaven → COLMAP 格式（原始 scene）
-# ============================================================
-python scripts/polyhaven_to_colmap.py \
-    --data_root /data/polyhaven_lvsm/test \
-    --scene_name $OBJ \
-    --output_dir data/polyhaven_colmap/$OBJ \
-    --downsample 1
+#!/bin/bash
+set -e
 
-# ============================================================
-# Step 2: LightSwitch 重光照（生成 relit 图片 + COLMAP sparse）
-# 注意：先删除旧的 albedo 缓存避免分辨率不匹配
-# ============================================================
-rm -rf relighting_outputs/rm_3_3/$OBJ/albedo*
-rm -rf relighting_outputs/rm_3_3/$OBJ/orm*
+SCENES=(
+  ceramic_vase_02_white_env_0
+  marble_bust_01_env_2
+  pot_enamel_01_white_env_0
+  potted_plant_02_white_env_0
+)
 
-CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes 1 produce_gs_relightings.py \
+DATA_ROOT="/data/polyhaven_lvsm/test"
+METADATA_DIR="data_samples/relight_metadata"
+export CUDA_VISIBLE_DEVICES=0
+
+for OBJ in "${SCENES[@]}"; do
+  echo ""
+  echo "============================================================"
+  echo " Scene: $OBJ"
+  echo "============================================================"
+
+  if [ ! -f "$METADATA_DIR/$OBJ.json" ]; then
+    echo "Skipping $OBJ: metadata not found"
+    continue
+  fi
+
+  RELIT=$(python3 -c "import json; print(json.load(open('$METADATA_DIR/$OBJ.json'))['relit_scene_name'])")
+
+  # Step 1: polyhaven → COLMAP
+  if [ ! -f "data/polyhaven_colmap/$OBJ/sparse/0/cameras.bin" ]; then
+    python scripts/polyhaven_to_colmap.py \
+      --data_root "$DATA_ROOT" \
+      --scene_name "$OBJ" \
+      --output_dir "data/polyhaven_colmap/$OBJ" \
+      --downsample 1
+  else
+    echo "[Step 1] COLMAP exists, skipping"
+  fi
+
+  # Step 2: LightSwitch relighting
+  rm -rf relighting_outputs/rm_3_3/$OBJ/albedo* relighting_outputs/rm_3_3/$OBJ/orm*
+  accelerate launch --num_processes 1 produce_gs_relightings.py \
     --dataset_type polyhaven \
-    --data_root /data/polyhaven_lvsm/test \
-    --relight_metadata data_samples/relight_metadata/$OBJ.json \
+    --data_root "$DATA_ROOT" \
+    --relight_metadata "$METADATA_DIR/$OBJ.json" \
     --downsample 1
 
-# ============================================================
-# Step 3: 训练初始 GS（原始 scene）
-# ============================================================
-python gaussian-splatting/train.py \
-    -s data/polyhaven_colmap/$OBJ \
-    -m gs_outputs/$OBJ \
-    --images images \
-    --resolution 1 \
-    --checkpoint_iterations 30000
+  # Step 3: Initial GS
+  if [ ! -f "gs_outputs/$OBJ/chkpnt30000.pth" ]; then
+    python gaussian-splatting/train.py \
+      -s "data/polyhaven_colmap/$OBJ" \
+      -m "gs_outputs/$OBJ" \
+      --images images \
+      --resolution 1 \
+      --checkpoint_iterations 30000
+  else
+    echo "[Step 3] Initial GS exists, skipping"
+  fi
 
-# ============================================================
-# Step 4: 冻结几何，用 relit 图片微调 GS 外观（依赖 Step 2 输出）
-# ============================================================
-python gaussian-splatting/train.py \
+  # Step 4: Fine-tune GS with relit images
+  python gaussian-splatting/train.py \
     -s "relighting_outputs/rm_3_3/$OBJ/$RELIT" \
-    --start_checkpoint gs_outputs/$OBJ/chkpnt30000.pth \
+    --start_checkpoint "gs_outputs/$OBJ/chkpnt30000.pth" \
     --iterations 40000 \
     -m "gs_outputs/relit_gs/$OBJ/$RELIT" \
     --images images \
@@ -50,9 +70,12 @@ python gaussian-splatting/train.py \
     --scaling_lr 0.0 \
     --rotation_lr 0.0
 
-# ============================================================
-# Step 5: 渲染 relit GS（需先完成 Step 2 + Step 4）
-# 仅渲染初始 GS 可用: render.py -m gs_outputs/$OBJ
-# ============================================================
-python gaussian-splatting/render.py \
+  # Step 5: Render relit GS
+  python gaussian-splatting/render.py \
     -m "gs_outputs/relit_gs/$OBJ/$RELIT"
+
+  echo "=== Done: $OBJ → $RELIT ==="
+done
+
+echo ""
+echo "All scenes complete."
