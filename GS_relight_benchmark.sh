@@ -9,7 +9,7 @@
 
 set -e
 
-OBJ="${1:-ceramic_vase_02_white_env_0}"
+OBJ="${1:-cardboard_box_01_env_1}"
 DATA_ROOT="/data/polyhaven_lvsm/test"
 METADATA_DIR="data_samples/relight_metadata"
 export CUDA_VISIBLE_DEVICES=0
