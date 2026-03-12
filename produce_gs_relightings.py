@@ -310,9 +310,10 @@ def produce_colmap(accelerate, args, data_path, pipeline, stable_material, weigh
 
     relit_images_mean_save = relit_images_rescaled * mask
     relit_images_mean_save = relit_images_mean_save.permute(0, 2, 3, 1).cpu().numpy()
-    mask = mask.permute(0, 2, 3, 1).cpu().numpy()[..., :1]
-    rgb = filmic_tonemap(relit_images_mean_save[..., :3])
-    relit_images_mean_save = np.concatenate((rgb, mask), axis=-1)
+    mask_np = mask.permute(0, 2, 3, 1).cpu().numpy()[..., :1]
+    rgb = relit_images_mean_save[..., :3] + (1 - mask_np)  # white background where masked
+    rgb = filmic_tonemap(rgb)
+    relit_images_mean_save = np.concatenate((rgb, mask_np), axis=-1)
     relit_images_mean_save = np.rint(relit_images_mean_save * 255.0).clip(0, 255).astype(np.uint8)
     if accelerate.is_main_process:
         print(f"Saving {train_dataset.n_images} images...")
@@ -427,7 +428,8 @@ def produce_polyhaven(accelerate, args, pipeline, stable_material, weight_dtype=
     relit_images_mean_save = relit_image_mean * mask[:relit_image_mean.shape[0]]
     relit_images_mean_save = relit_images_mean_save.permute(0, 2, 3, 1).cpu().numpy()
     mask_np = mask[:relit_image_mean.shape[0]].permute(0, 2, 3, 1).cpu().numpy()[..., :1]
-    rgb = filmic_tonemap(relit_images_mean_save[..., :3])
+    rgb = relit_images_mean_save[..., :3] + (1 - mask_np)  # white background where masked
+    rgb = filmic_tonemap(rgb)
     relit_images_mean_save = np.concatenate((rgb, mask_np), axis=-1)
     relit_images_mean_save = np.rint(relit_images_mean_save * 255.0).clip(0, 255).astype(np.uint8)
     if accelerate.is_main_process:
